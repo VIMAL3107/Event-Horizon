@@ -9,7 +9,9 @@ const MessageBubble = ({ type, content }) => {
     <div className={`message-container ${isUser ? 'user' : 'ai'}`}>
 
       <div className="bubble">
-        {isUser ? content : <ReactMarkdown>{content}</ReactMarkdown>}
+        {isUser ? content : (
+          <ReactMarkdown>{content}</ReactMarkdown>
+        )}
       </div>
 
       <style>{`

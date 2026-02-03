@@ -53,35 +53,36 @@ function App() {
   const handleSendMessage = async (text, file = null) => {
     let activeSessionId = currentSessionId;
 
-    // If no session, create one first
+    // 1. If no session, create one first
     if (!activeSessionId) {
       try {
-        const session = await api.createSession(text.slice(0, 30) + (text.length > 30 ? '...' : '')); // Use first message as title
+        const session = await api.createSession(text.slice(0, 30) + (text.length > 30 ? '...' : ''));
         activeSessionId = session.id;
         setCurrentSessionId(activeSessionId);
-        // Refresh list immediately
         await loadSessions();
       } catch (error) {
         console.error('Failed to create session:', error);
+        setMessages(prev => [...prev, { type: 'ai', content: `Error: Could not create chat session. ${error.message}` }]);
         return;
       }
     }
 
-    // Add user message
-    const newMessages = [...messages, { type: 'user', content: text, file }];
-    setMessages(newMessages);
+    // 2. Optimistic Update: Show User Message + "Thinking" Placeholder
+    const tempUserMsg = { type: 'user', content: text, file };
+    const tempAiMsg = { type: 'ai', content: '...', isThinking: true }; // Placeholder
+
+    setMessages(prev => [...prev, tempUserMsg, tempAiMsg]);
     setIsLoading(true);
 
-    // Add initial empty AI message immediately
-    setMessages(prev => [...prev, { type: 'ai', content: '' }]);
-
     try {
+      // 3. Send Message
       const response = await api.sendMessage(activeSessionId, text, file);
 
-      // Streaming logic
+      // 4. Stream Response
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let aiContent = '';
+      let isFirstChunk = true;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -90,11 +91,25 @@ function App() {
         const chunk = decoder.decode(value, { stream: true });
         aiContent += chunk;
 
+        // Update the AI message in the UI
         setMessages(prev => {
           const newMsgs = [...prev];
-          // Update the last message (which is the AI message)
-          if (newMsgs.length > 0 && newMsgs[newMsgs.length - 1].type === 'ai') {
-            newMsgs[newMsgs.length - 1].content = aiContent;
+
+          // Find the last message (which should be our AI placeholder)
+          // We look from the end. It might not be the last one if the user typed fast, 
+          // but valid for this single-user flow.
+          const lastMsgIndex = newMsgs.length - 1;
+
+          if (lastMsgIndex >= 0) {
+            const lastMsg = newMsgs[lastMsgIndex];
+            // Ensure we are updating the AI message
+            if (lastMsg.type === 'ai') {
+              newMsgs[lastMsgIndex] = {
+                ...lastMsg,
+                content: aiContent,
+                isThinking: false // Remove thinking flag once we have data
+              };
+            }
           }
           return newMsgs;
         });
@@ -102,11 +117,13 @@ function App() {
 
     } catch (error) {
       console.error('Error sending message:', error);
+      // Remove the "Thinking" placeholder and show error
       setMessages(prev => {
+        // Filter out the "Thinking" placeholder if it exists and hasn't effectively changed
         const filtered = prev.filter(msg => !msg.isThinking);
         return [...filtered, {
           type: 'ai',
-          content: `Error: ${error.message}. (Ensure backend is running on port 8000)`
+          content: `Error: ${error.message}. (Ensure backend is running at http://localhost:8000)`
         }];
       });
     } finally {
@@ -119,6 +136,41 @@ function App() {
     setActiveModal(null);
   };
 
+  const handleDeleteSession = async (sessionId) => {
+    // Confirm before delete
+    if (!window.confirm("Are you sure you want to delete this chat?")) return;
+
+    try {
+      await api.deleteSession(sessionId);
+      // If the deleted session was active, switch to the first available or clear
+      if (sessionId === currentSessionId) {
+        const remaining = sessions.filter(s => s.id !== sessionId);
+        if (remaining.length > 0) {
+          switchSession(remaining[0].id);
+        } else {
+          setCurrentSessionId(null);
+          setMessages([]);
+          createNewSession(); // Create a new one if all empty
+        }
+      }
+      loadSessions();
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+    }
+  };
+
+  const handleRenameSession = async (sessionId, newTitle) => {
+    try {
+      await api.renameSession(sessionId, newTitle);
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId ? { ...s, title: newTitle } : s
+      ));
+    } catch (error) {
+      console.error('Failed to rename session:', error);
+      alert("Failed to rename chat.");
+    }
+  };
+
   return (
     <div className="app-container">
       <Sidebar
@@ -126,6 +178,8 @@ function App() {
         currentSessionId={currentSessionId}
         onSwitchSession={switchSession}
         onNewChat={handleNewChat}
+        onDeleteSession={handleDeleteSession}
+        onRenameSession={handleRenameSession}
         onSearch={() => setActiveModal('search')}
         onHistory={() => setActiveModal('history')}
         onSettings={() => setActiveModal('settings')}

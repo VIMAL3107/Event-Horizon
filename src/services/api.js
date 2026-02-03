@@ -30,6 +30,16 @@ export const api = {
         return response.json();
     },
 
+    async renameSession(sessionId, newTitle) {
+        const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: newTitle })
+        });
+        if (!response.ok) throw new Error('Failed to rename session');
+        return response.json();
+    },
+
     async sendMessage(sessionId, message, file = null) {
         const formData = new FormData();
         formData.append('session_id', sessionId);
