@@ -10,3 +10,4 @@ langchain-text-splitters
 langchain-core
 pypdf
 chromadb
+python-multipart
