@@ -2,10 +2,8 @@ services:
   # Backend Service (Python/FastAPI)
   - type: web
     name: event-horizon-backend
-    env: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GEMINI_API_KEY
         sync: false
