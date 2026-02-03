@@ -27,4 +27,6 @@ dist-ssr
 
 !backend/.env
 *.db
+*.bak
+
 
