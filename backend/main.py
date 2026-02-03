@@ -333,6 +333,37 @@ async def generate_image(prompt: str = Form(...)):
         print(f"Image Gen Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- Frontend Static Files Serving ---
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+# Mount static files - serve the built React app
+# We expect the 'dist' folder to be in the parent directory of backend
+frontend_dist = Path(__file__).parent.parent / 'dist'
+
+if frontend_dist.exists():
+    # Mount assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+    # Catch-all route for SPA client-side routing
+    # This must be defined AFTER all other API routes
+    @app.get("/{catchall:path}")
+    async def serve_react_app(catchall: str):
+        # Allow API routes to pass through if they weren't caught above
+        if catchall.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
+            
+        # Check if a specific file is requested
+        file_path = frontend_dist / catchall
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+            
+        # Otherwise return index.html
+        return FileResponse(frontend_dist / "index.html")
+else:
+    print(f"WARNING: Frontend dist directory not found at {frontend_dist}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
