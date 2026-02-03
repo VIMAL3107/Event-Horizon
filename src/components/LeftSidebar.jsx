@@ -7,10 +7,10 @@ import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import UserProfile from './UserProfile';
 import JobAutomation from './JobAutomation';
-import LoginButton from './LoginButton';
+
 
 const LeftSidebar = ({ onNewTab, onNavigate }) => {
-    const { isAuthenticated, user } = useAuth();
+    const { isAuthenticated, user, login } = useAuth();
     const [activeNav, setActiveNav] = useState('Spaces');
     const [showProfile, setShowProfile] = useState(false);
     const [showAutomation, setShowAutomation] = useState(false);
@@ -123,7 +123,21 @@ const LeftSidebar = ({ onNewTab, onNavigate }) => {
                 </>
             ) : (
                 <div style={{ padding: '20px' }}>
-                    <LoginButton />
+                    <button
+                        onClick={login}
+                        style={{
+                            width: '100%',
+                            padding: '10px',
+                            borderRadius: '8px',
+                            backgroundColor: 'rgba(255,255,255,0.1)',
+                            color: '#e4e4e7',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '12px'
+                        }}
+                    >
+                        Login
+                    </button>
                 </div>
             )}
 
