@@ -1,16 +1,25 @@
 import os
-import json
 import sqlite3
-import uuid 
+import uuid
+import json
+import base64
+import requests
+import asyncio
 from datetime import datetime
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
-from pathlib import Path
 from dotenv import load_dotenv
 import google.generativeai as genai
+
+# Local Imports
+from rag import RAGSystem
+
+# --- Configuration & Setup ---
 
 # Load env from backend directory first, then root
 env_path = Path(__file__).parent / '.env'
@@ -22,7 +31,7 @@ app = FastAPI()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,11 +42,26 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
+# Initialize RAG System
+# We initialize it here so it's ready for the app
+rag_system = None
+if GEMINI_API_KEY:
+    try:
+        rag_system = RAGSystem(GEMINI_API_KEY)
+        print("RAG System initialized successfully.")
+    except Exception as e:
+        print(f"Failed to initialize RAG System: {e}")
+
 # Database Setup
 DB_NAME = "chatbot.db"
 
-def init_db():
+def get_db_connection():
     conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS sessions
                  (id TEXT PRIMARY KEY, title TEXT, created_at TIMESTAMP)''')
@@ -49,7 +73,8 @@ def init_db():
 
 init_db()
 
-# Models
+# --- Models ---
+
 class Session(BaseModel):
     id: str
     title: str
@@ -58,7 +83,7 @@ class Session(BaseModel):
 class Message(BaseModel):
     role: str
     content: str
-    type: str = "text" # text, image, file
+    type: str = "text"
 
 class ChatRequest(BaseModel):
     messages: list[Message]
@@ -73,14 +98,26 @@ You are a helpful, knowledgeable, and versatile AI assistant.
 3.  **Be Natural**: Communicate in a natural, conversational tone.
 4.  **Be Safe**: Do not generate harmful, illegal, or biased content.
 
-Adapt your response style to the user's request. If they ask for code, provide code. If they ask for a summary, provide a summary.
+Adapt your response style to the user's request.
 """
 
-# Helper functions
-def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
+# --- Helper Functions ---
+
+async def generate_chat_title(session_id: str, user_message: str):
+    """Generates a short title for the chat session based on the first message."""
+    try:
+        model = genai.GenerativeModel("gemini-flash-latest")
+        response = model.generate_content(f"Generate a short (3-5 words) title for this chat based on the user's message: {user_message}")
+        new_title = response.text.strip()
+        
+        conn = get_db_connection()
+        conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (new_title, session_id))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error generating chat title: {e}")
+
+# --- Endpoints ---
 
 @app.get("/sessions")
 async def get_sessions():
@@ -115,6 +152,48 @@ async def delete_session(session_id: str):
     conn.close()
     return {"status": "success"}
 
+@app.patch("/sessions/{session_id}")
+async def update_session_title(session_id: str, title: str = Body(..., embed=True)):
+    conn = get_db_connection()
+    conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, session_id))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "id": session_id, "title": title}
+
+@app.post("/add-knowledge")
+async def add_knowledge(text: str = Form(...)):
+    if not rag_system:
+         raise HTTPException(status_code=500, detail="RAG System not initialized (check API Key).")
+    try:
+        rag_system.add_text(text)
+        return {"status": "success", "message": "Knowledge added to brain."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/upload-knowledge")
+async def upload_knowledge(file: UploadFile = File(...)):
+    if not rag_system:
+         raise HTTPException(status_code=500, detail="RAG System not initialized.")
+    
+    try:
+        # Save temp file
+        temp_filename = f"temp_{uuid.uuid4()}_{file.filename}"
+        with open(temp_filename, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+            
+        # Add to RAG
+        rag_system.add_file(temp_filename)
+        
+        # Cleanup
+        os.remove(temp_filename)
+        
+        return {"status": "success", "message": f"File '{file.filename}' processed and added to brain."}
+    except Exception as e:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/chat")
 async def chat_endpoint(
     message: str = Form(...),
@@ -126,67 +205,133 @@ async def chat_endpoint(
 
     conn = get_db_connection()
     
-    # Save user message
+    # 1. Save User Message
     msg_type = "text"
     if file:
-        msg_type = "file" # Simplified for now
-        # In a real app, we might save the file path or upload to cloud storage
-        # Here we just store a placeholder in content for the DB
-    
+        msg_type = "file"
+        
     conn.execute("INSERT INTO messages (session_id, role, content, type, created_at) VALUES (?, ?, ?, ?, ?)",
                  (session_id, "user", message, msg_type, datetime.now()))
     conn.commit()
 
-    # Retrieve history for context
+    # 2. Check if we need to generate a title (if it's the start of a chat)
+    message_count = conn.execute("SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,)).fetchone()[0]
+    if message_count <= 2: # User message + potentially 1 previous
+        asyncio.create_task(generate_chat_title(session_id, message))
+
+    # 3. Retrieve History for Context
     history_rows = conn.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,)).fetchall()
     
     gemini_history = []
-    # Add system prompt implicitly via system_instruction in model init
-    
-    for row in history_rows[:-1]: # Exclude the just added message to avoid duplication if we handle it specially
+    # Load history into Gemini format
+    for row in history_rows[:-1]: # Exclude the just added message to avoid duplication in history vs new message
         role = "user" if row["role"] == "user" else "model"
         gemini_history.append({"role": role, "parts": [row["content"]]})
 
     try:
+        # 4. Initialize Model
         model = genai.GenerativeModel(
-            model_name="gemini-flash-latest", # Use a model that supports multimodal
+            model_name="gemini-flash-latest",
             system_instruction=SYSTEM_PROMPT
         )
         
         chat = model.start_chat(history=gemini_history)
         
-        # Prepare content for generation
-        content_parts = [message]
+        # 5. RAG Integration: Retrieve Context
+        # We start with the user's raw message
+        final_prompt = message
+        
+        if rag_system:
+            context_data = rag_system.get_context(message)
+            if context_data:
+                system_instruction_rag = f"""
+                You are an assistant. Use the provided Context to answer the user's question. 
+                If the answer is not in the context, just use your own knowledge.
+                
+                Context:
+                {context_data}
+                """
+                final_prompt = f"{system_instruction_rag}\n\nUser Question: {message}"
+
+        # 6. Prepare Content Parts (handling file uploads if any)
+        content_parts = [final_prompt]
         
         if file:
             content_type = file.content_type
             file_data = await file.read()
-            
-            # Create a Part object for the file
-            # Note: For large files, using the File API is better, but for small uploads this works
             blob = {"mime_type": content_type, "data": file_data}
             content_parts.append(blob)
 
+        # 7. Generate Response (Streaming)
         async def generate():
+            print("DEBUG: Starting generation...")
             full_response = ""
-            response = await chat.send_message_async(content_parts, stream=True)
-            async for chunk in response:
-                if chunk.text:
-                    full_response += chunk.text
-                    yield chunk.text
-            
-            # Save AI response to DB after streaming
-            conn.execute("INSERT INTO messages (session_id, role, content, type, created_at) VALUES (?, ?, ?, ?, ?)",
-                         (session_id, "assistant", full_response, "text", datetime.now()))
-            conn.commit()
-            conn.close()
+            try:
+                print(f"DEBUG: sending message to gemini with parts: {len(content_parts)}")
+                response = await chat.send_message_async(content_parts, stream=True)
+                print("DEBUG: message sent, receiving chunks...")
+                async for chunk in response:
+                    if chunk.text:
+                        # print(f"DEBUG: chunk received: {chunk.text[:20]}...")
+                        full_response += chunk.text
+                        yield chunk.text
+            except Exception as e:
+                print(f"DEBUG: Generation ERROR: {e}")
+                yield f"[Error generating response: {str(e)}]"
+                return
 
+            # Save AI response to DB after streaming is complete
+            try:
+                print("DEBUG: Saving response to DB...")
+                conn_new = get_db_connection()
+                conn_new.execute("INSERT INTO messages (session_id, role, content, type, created_at) VALUES (?, ?, ?, ?, ?)",
+                             (session_id, "assistant", full_response, "text", datetime.now()))
+                conn_new.commit()
+                conn_new.close()
+                print("DEBUG: Response saved.")
+            except Exception as e:
+                print(f"DEBUG: DB Error in background: {e}")
+
+            
         return StreamingResponse(generate(), media_type="text/plain")
 
     except Exception as e:
-        print(f"Gemini Error: {str(e)}")
         conn.close()
+        print(f"Gemini Error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Gemini API Error: {str(e)}")
+    finally:
+        conn.close()
+
+@app.post("/generate-image")
+async def generate_image(prompt: str = Form(...)):
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set")
+    
+    try:
+        # We will use the REST API directly for Imagen
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key={GEMINI_API_KEY}"
+        
+        payload = {
+            "instances": [{"prompt": prompt}],
+            "parameters": {"sampleCount": 1}
+        }
+        
+        response = requests.post(url, json=payload)
+        
+        if response.status_code != 200:
+             # Fallback or detail error
+             raise HTTPException(status_code=500, detail=f"Google API Error: {response.text}")
+             
+        result = response.json()
+        if "predictions" not in result:
+             raise HTTPException(status_code=500, detail="No image generated")
+             
+        b64_image = result["predictions"][0]["bytesBase64Encoded"]
+        return {"image_url": f"data:image/png;base64,{b64_image}"}
+
+    except Exception as e:
+        print(f"Image Gen Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

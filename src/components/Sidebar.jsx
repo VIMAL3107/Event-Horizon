@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
-import { Plus, MessageSquare, Settings, User, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Plus, MessageSquare, Settings, User, ChevronLeft, ChevronRight, Search, X,
+  MoreHorizontal, Share, Users, Edit2, FolderInput, Pin, Archive, Trash2
+} from 'lucide-react';
 
 const BlackHoleLogo = () => (
   <div className="black-hole-container">
@@ -53,14 +56,29 @@ const BlackHoleLogo = () => (
   </div>
 );
 
-const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessionId, onSwitchSession }) => {
+const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessionId, onSwitchSession, onDeleteSession, onRenameSession }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchActive, setIsSearchActive] = useState(false);
+  const [activeMenuId, setActiveMenuId] = useState(null);
+  const menuRef = useRef(null);
 
   const filteredSessions = sessions.filter(session =>
     session.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setActiveMenuId(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const handleSearchClick = () => {
     if (isCollapsed) {
@@ -73,6 +91,29 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
     e.stopPropagation();
     setIsSearchActive(false);
     setSearchQuery('');
+  };
+
+  const toggleMenu = (e, sessionId) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setActiveMenuId(activeMenuId === sessionId ? null : sessionId);
+  };
+
+  const handleMenuAction = (e, action, session) => {
+    e.stopPropagation();
+    setActiveMenuId(null);
+
+    switch (action) {
+      case 'delete':
+        onDeleteSession && onDeleteSession(session.id);
+        break;
+      case 'rename':
+        const newTitle = prompt("Enter new chat name:", session.title);
+        if (newTitle) onRenameSession && onRenameSession(session.id, newTitle);
+        break;
+      default:
+        console.log(`Action ${action} not implemented yet`);
+    }
   };
 
   return (
@@ -120,15 +161,50 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
             </div>
           ) : (
             filteredSessions.map(session => (
-              <button
-                key={session.id}
-                className={`chat-item ${currentSessionId === session.id ? 'active' : ''}`}
-                onClick={() => onSwitchSession(session.id)}
-                title={session.title}
-              >
-                <MessageSquare size={18} className="chat-icon" />
-                {!isCollapsed && <span className="chat-label">{session.title}</span>}
-              </button>
+              <div key={session.id} className="chat-item-wrapper" style={{ position: 'relative' }}>
+                <button
+                  className={`chat-item ${currentSessionId === session.id ? 'active' : ''}`}
+                  onClick={() => onSwitchSession(session.id)}
+                  title={session.title}
+                >
+                  <MessageSquare size={18} className="chat-icon" />
+                  {!isCollapsed && <span className="chat-label">{session.title}</span>}
+
+                  {!isCollapsed && (
+                    <div className="chat-options-trigger" onClick={(e) => toggleMenu(e, session.id)}>
+                      <MoreHorizontal size={16} />
+                    </div>
+                  )}
+                </button>
+
+                {/* Context Menu */}
+                {activeMenuId === session.id && (
+                  <div className="context-menu" ref={menuRef}>
+                    <div className="menu-item" onClick={(e) => handleMenuAction(e, 'share', session)}>
+                      <Share size={14} /> <span>Share</span>
+                    </div>
+                    <div className="menu-item" onClick={(e) => handleMenuAction(e, 'group', session)}>
+                      <Users size={14} /> <span>Start a group chat</span>
+                    </div>
+                    <div className="menu-item" onClick={(e) => handleMenuAction(e, 'rename', session)}>
+                      <Edit2 size={14} /> <span>Rename</span>
+                    </div>
+                    <div className="menu-item" onClick={(e) => handleMenuAction(e, 'move', session)}>
+                      <FolderInput size={14} /> <span>Move to project</span> <ChevronRight size={12} className="menu-arrow" />
+                    </div>
+                    <div className="menu-splitter"></div>
+                    <div className="menu-item" onClick={(e) => handleMenuAction(e, 'pin', session)}>
+                      <Pin size={14} /> <span>Pin chat</span>
+                    </div>
+                    <div className="menu-item" onClick={(e) => handleMenuAction(e, 'archive', session)}>
+                      <Archive size={14} /> <span>Archive</span>
+                    </div>
+                    <div className="menu-item delete" onClick={(e) => handleMenuAction(e, 'delete', session)}>
+                      <Trash2 size={14} /> <span>Delete</span>
+                    </div>
+                  </div>
+                )}
+              </div>
             ))
           )}
         </div>
@@ -263,6 +339,10 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
           gap: 0.4rem;
         }
 
+        .chat-item-wrapper {
+            position: relative;
+        }
+
         .chat-item {
           display: flex;
           align-items: center;
@@ -277,9 +357,11 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
           text-align: left;
           width: 100%;
           overflow: hidden;
+          position: relative;
+          padding-right: 2rem; /* Make space for the dots */
         }
 
-        .chat-item:hover {
+        .chat-item:hover, .chat-item.active {
           background: rgba(255, 255, 255, 0.05);
           color: var(--color-text-white);
         }
@@ -294,10 +376,90 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
           overflow: hidden;
           text-overflow: ellipsis;
           font-size: 0.9rem;
+          flex: 1;
         }
         
         .chat-icon {
             flex-shrink: 0;
+        }
+
+        /* Dots Trigger */
+        .chat-options-trigger {
+            position: absolute;
+            right: 0.5rem;
+            top: 50%;
+            transform: translateY(-50%);
+            opacity: 0;
+            padding: 0.3rem;
+            border-radius: 4px;
+            color: var(--color-text-muted);
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            background: transparent;
+        }
+
+        .chat-item:hover .chat-options-trigger,
+        .chat-options-trigger:hover {
+            opacity: 1;
+        }
+        
+        .chat-options-trigger:hover {
+            background: rgba(255,255,255,0.1);
+            color: white;
+        }
+        
+        /* Context Menu */
+        .context-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: #252525;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 0.5rem;
+            min-width: 220px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            animation: fadeIn 0.1s ease-out;
+        }
+
+        .menu-item {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            padding: 0.6rem 0.8rem;
+            color: #e0e0e0;
+            font-size: 0.9rem;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+
+        .menu-item:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        .menu-item.delete {
+            color: #ff5555;
+        }
+        
+        .menu-item.delete:hover {
+            background: rgba(255, 85, 85, 0.1);
+        }
+
+        .menu-splitter {
+            height: 1px;
+            background: rgba(255,255,255,0.1);
+            margin: 0.4rem 0;
+        }
+
+        .menu-arrow {
+            margin-left: auto;
+            opacity: 0.5;
         }
 
         .footer-actions {
