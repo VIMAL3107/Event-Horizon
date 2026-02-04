@@ -60,11 +60,21 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+from fastapi import Header
+
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS sessions
                  (id TEXT PRIMARY KEY, title TEXT, created_at TIMESTAMP)''')
+    
+    # Check for user_id column and add if missing (Migration)
+    try:
+        c.execute("SELECT user_id FROM sessions LIMIT 1")
+    except sqlite3.OperationalError:
+        print("Migrating DB: Adding user_id column")
+        c.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+
     c.execute('''CREATE TABLE IF NOT EXISTS messages
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, content TEXT, type TEXT, created_at TIMESTAMP,
                   FOREIGN KEY(session_id) REFERENCES sessions(id))''')
@@ -79,6 +89,7 @@ class Session(BaseModel):
     id: str
     title: str
     created_at: datetime
+    user_id: Optional[str] = None
 
 class Message(BaseModel):
     role: str
@@ -120,32 +131,54 @@ async def generate_chat_title(session_id: str, user_message: str):
 # --- Endpoints ---
 
 @app.get("/sessions")
-async def get_sessions():
+async def get_sessions(x_user_id: Optional[str] = Header(None, alias="X-User-ID")):
     conn = get_db_connection()
-    sessions = conn.execute("SELECT * FROM sessions ORDER BY created_at DESC").fetchall()
+    if x_user_id:
+        sessions = conn.execute("SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at DESC", (x_user_id,)).fetchall()
+    else:
+        # Fallback for old clients or if no ID sent: return nothing or public sessions
+        # For privacy, better to return empty list if no ID provided in this new mode
+        sessions = []
     conn.close()
     return [{"id": s["id"], "title": s["title"], "created_at": s["created_at"]} for s in sessions]
 
 @app.post("/sessions")
-async def create_session(title: str = "New Chat"):
+async def create_session(title: str = "New Chat", x_user_id: Optional[str] = Header(None, alias="X-User-ID")):
     session_id = str(uuid.uuid4())
     conn = get_db_connection()
-    conn.execute("INSERT INTO sessions (id, title, created_at) VALUES (?, ?, ?)", 
-                 (session_id, title, datetime.now()))
+    # Save with user_id if present
+    conn.execute("INSERT INTO sessions (id, title, created_at, user_id) VALUES (?, ?, ?, ?)", 
+                 (session_id, title, datetime.now(), x_user_id))
     conn.commit()
     conn.close()
     return {"id": session_id, "title": title}
 
 @app.get("/sessions/{session_id}")
-async def get_session_messages(session_id: str):
+async def get_session_messages(session_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-ID")):
     conn = get_db_connection()
+    # Verify ownership (optional but recommended)
+    session = conn.execute("SELECT user_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    
+    if session:
+        # If session has an owner and it doesn't match request, deny access
+        if session['user_id'] and session['user_id'] != x_user_id:
+            conn.close()
+            # Silent fail or 403
+            return [] # Returning empty list to not leak existence, or could raise 403
+
     messages = conn.execute("SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,)).fetchall()
     conn.close()
     return [{"role": m["role"], "content": m["content"], "type": m["type"]} for m in messages]
 
 @app.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-ID")):
     conn = get_db_connection()
+    # Verify ownership
+    session = conn.execute("SELECT user_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if session and session['user_id'] and session['user_id'] != x_user_id:
+        conn.close()
+        raise HTTPException(status_code=403, detail="Not authorized to delete this session")
+
     conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
     conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
     conn.commit()
@@ -153,8 +186,14 @@ async def delete_session(session_id: str):
     return {"status": "success"}
 
 @app.patch("/sessions/{session_id}")
-async def update_session_title(session_id: str, title: str = Body(..., embed=True)):
+async def update_session_title(session_id: str, title: str = Body(..., embed=True), x_user_id: Optional[str] = Header(None, alias="X-User-ID")):
     conn = get_db_connection()
+    # Verify ownership
+    session = conn.execute("SELECT user_id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if session and session['user_id'] and session['user_id'] != x_user_id:
+        conn.close()
+        raise HTTPException(status_code=403, detail="Not authorized to edit this session")
+
     conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, session_id))
     conn.commit()
     conn.close()
