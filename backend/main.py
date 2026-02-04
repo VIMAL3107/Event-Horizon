@@ -281,16 +281,21 @@ async def chat_endpoint(
         final_prompt = message
         
         if rag_system:
-            context_data = rag_system.get_context(message)
-            if context_data:
-                system_instruction_rag = f"""
-                You are an assistant. Use the provided Context to answer the user's question. 
-                If the answer is not in the context, just use your own knowledge.
-                
-                Context:
-                {context_data}
-                """
-                final_prompt = f"{system_instruction_rag}\n\nUser Question: {message}"
+            try:
+                context_data = rag_system.get_context(message)
+                if context_data:
+                    system_instruction_rag = f"""
+                    You are an assistant. Use the provided Context to answer the user's question. 
+                    If the answer is not in the context, just use your own knowledge.
+                    
+                    Context:
+                    {context_data}
+                    """
+                    final_prompt = f"{system_instruction_rag}\n\nUser Question: {message}"
+            except Exception as e:
+                print(f"RAG Retrieval failed (Quota or other error): {e}. Proceeding without context.")
+                # We simply continue with the original 'message' as final_prompt
+                pass
 
         # 6. Prepare Content Parts (handling file uploads if any)
         content_parts = [final_prompt]
