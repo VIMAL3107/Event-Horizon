@@ -98,7 +98,7 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[Message]
-    model: str = "gemini-1.5-flash-latest"
+    model: str = "gemini-1.5-flash-001"
 
 SYSTEM_PROMPT = """
 You are a helpful, knowledgeable, and versatile AI assistant.
@@ -117,7 +117,7 @@ Adapt your response style to the user's request.
 async def generate_chat_title(session_id: str, user_message: str):
     """Generates a short title for the chat session based on the first message."""
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        model = genai.GenerativeModel("gemini-1.5-flash-001")
         response = model.generate_content(f"Generate a short (3-5 words) title for this chat based on the user's message: {user_message}")
         new_title = response.text.strip()
         
@@ -270,7 +270,7 @@ async def chat_endpoint(
     try:
         # 4. Initialize Model
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash-latest",
+            model_name="gemini-1.5-flash-001",
             system_instruction=SYSTEM_PROMPT
         )
         
