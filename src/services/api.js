@@ -8,7 +8,7 @@ export const api = {
     },
 
     async createSession(title = 'New Chat') {
-        const url = new URL(`${API_BASE_URL}/sessions`);
+        const url = new URL(`${API_BASE_URL}/sessions`, window.location.origin);
         url.searchParams.append('title', title);
 
         const res = await fetch(url, { method: 'POST' });
