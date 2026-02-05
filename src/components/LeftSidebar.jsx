@@ -6,7 +6,7 @@ import {
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import UserProfile from './UserProfile';
-import JobAutomation from './JobAutomation';
+
 
 
 const LeftSidebar = ({ onNewTab, onNavigate }) => {

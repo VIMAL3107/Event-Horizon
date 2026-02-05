@@ -56,7 +56,8 @@ if GEMINI_API_KEY:
 DB_NAME = "chatbot.db"
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
+    # Increase timeout to 30 seconds to handle concurrent access better
+    conn = sqlite3.connect(DB_NAME, timeout=30.0)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -64,6 +65,12 @@ from fastapi import Header
 
 def init_db():
     conn = get_db_connection()
+    # Enable Write-Ahead Logging (WAL) mode for better concurrency
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception as e:
+        print(f"Warning: Could not enable WAL mode: {e}")
+        
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS sessions
                  (id TEXT PRIMARY KEY, title TEXT, created_at TIMESTAMP)''')
@@ -180,7 +187,7 @@ async def delete_session(session_id: str, x_user_id: Optional[str] = Header(None
         raise HTTPException(status_code=403, detail="Not authorized to delete this session")
 
     conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-    conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+    conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
     conn.commit()
     conn.close()
     return {"status": "success"}
