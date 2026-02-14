@@ -275,24 +275,27 @@ async def chat_endpoint(
         gemini_history.append({"role": role, "parts": [row["content"]]})
 
     try:
-        model = os.getenv("GROQ_API_KEY")
+        groq_api_key = os.getenv("GROQ_API_KEY")
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
-            "Authorization": f"Bearer {model}",
+            "Authorization": f"Bearer {groq_api_key}",
             "Content-Type": "application/json"
         }
         data = {
             "messages": [{"role": "user", "content": message}],
             "model": "llama-3.1-8b-instant"
         }
-        response = requests.post(url, headers=headers, json=data)
-        if response.status_code == 200:
-            print("Success! Groq API Key is working.")
-            print("Response:", response.json()['choices'][0]['message']['content'])
-            final_prompt = response.json()['choices'][0]['message']['content']
-        else:
-            print(f"Failed. Status Code: {response.status_code}")
-            print("Error:", response.text)
+        # Only try Groq if key is present
+        if groq_api_key:
+            try:
+                response = requests.post(url, headers=headers, json=data)
+                if response.status_code == 200:
+                    print("Success! Groq API Key is working.")
+                    # print("Response:", response.json()['choices'][0]['message']['content'])
+                else:
+                    print(f"Groq failed. Status Code: {response.status_code}")
+            except Exception as e:
+                print(f"Groq request error: {e}")
         
         # 5. RAG Integration: Retrieve Context
         # We start with the user's raw message
@@ -329,6 +332,11 @@ async def chat_endpoint(
             content_parts.append(blob)
 
         # 7. Generate Response (Streaming)
+        # Initialize Gemini Model & Chat Session
+        model_name = "gemini-1.5-flash"
+        gen_model = genai.GenerativeModel(model_name=model_name, system_instruction=SYSTEM_PROMPT)
+        chat = gen_model.start_chat(history=gemini_history)
+
         async def generate():
             print("DEBUG: Starting generation...")
             full_response = ""
