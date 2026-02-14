@@ -11,3 +11,6 @@ langchain-core
 pypdf
 chromadb
 python-multipart
+google-auth-oauthlib
+google-api-python-client
+google-auth

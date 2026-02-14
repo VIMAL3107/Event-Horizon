@@ -1,19 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
+import AuthPage from './components/AuthPage';
+import { useAuth } from './context/AuthContext';
 import { api } from './services/api';
 
 function App() {
+  const { user, isAuthenticated, loading: authLoading } = useAuth();
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeModal, setActiveModal] = useState(null); // 'search', 'history', 'settings'
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [sessions, setSessions] = useState([]);
 
-  // Load sessions on mount
+  // Load sessions on mount or when auth state changes
   useEffect(() => {
-    loadSessions();
-  }, []);
+    if (isAuthenticated) {
+      loadSessions();
+    }
+  }, [isAuthenticated]);
 
   const loadSessions = async () => {
     try {
@@ -170,6 +175,36 @@ function App() {
       alert("Failed to rename chat.");
     }
   };
+
+  if (authLoading) {
+    return (
+      <div className="cosmic-loader-container">
+        <div className="loader-orbit"><div className="loader-planet"></div></div>
+        <p>Initializing Cosmic Connection...</p>
+        <style>{`
+          .cosmic-loader-container {
+             height: 100vh; width: 100vw; background: #050505;
+             display: flex; flex-direction: column; align-items: center; justify-content: center;
+             gap: 2rem; color: #ff8c42; font-family: sans-serif;
+          }
+          .loader-orbit {
+            width: 60px; height: 60px; border: 1px solid rgba(255, 140, 66, 0.2);
+            border-radius: 50%; position: relative; animation: rotate 2s linear infinite;
+          }
+          .loader-planet {
+            width: 12px; height: 12px; background: #ff8c42; border-radius: 50%;
+            position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
+            box-shadow: 0 0 15px #ff8c42;
+          }
+          @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        `}</style>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <AuthPage />;
+  }
 
   return (
     <div className="app-container">

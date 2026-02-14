@@ -11,10 +11,17 @@ function getUserId() {
 }
 
 const getHeaders = (customHeaders = {}) => {
-    return {
+    const headers = {
         'X-User-ID': getUserId(),
         ...customHeaders
     };
+
+    const token = localStorage.getItem('session_token');
+    if (token) {
+        headers['X-Session-Token'] = token;
+    }
+
+    return headers;
 };
 
 export const api = {
@@ -76,10 +83,7 @@ export const api = {
         const response = await fetch(`${API_BASE_URL}/chat`, {
             method: 'POST',
             body: formData,
-            headers: {
-                'X-User-ID': getUserId()
-                // Note: Content-Type is set automatically for FormData
-            }
+            headers: getHeaders()
         });
 
         if (!response.ok) {

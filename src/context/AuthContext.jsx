@@ -14,13 +14,22 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const checkAuth = async () => {
+        const token = localStorage.getItem('session_token');
+        if (!token) {
+            setLoading(false);
+            return;
+        }
+
         try {
-            const response = await fetch(`${window.location.origin}/auth/status`);
+            const response = await fetch(`${window.location.origin}/auth/status`, {
+                headers: { 'X-Session-Token': token }
+            });
             const data = await response.json();
             if (data.connected && data.user) {
                 setUser(data.user);
                 setIsAuthenticated(true);
             } else {
+                localStorage.removeItem('session_token');
                 setUser(null);
                 setIsAuthenticated(false);
             }
@@ -33,23 +42,53 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    const login = () => {
-        window.location.href = `${window.location.origin}/auth/login`;
+    const register = async (username, email, password) => {
+        const response = await fetch(`${window.location.origin}/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, email, password })
+        });
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Registration failed');
+        }
+    };
+
+    const login = async (email, password) => {
+        const response = await fetch(`${window.location.origin}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Login failed');
+        }
+
+        const data = await response.json();
+        localStorage.setItem('session_token', data.token);
+        setUser(data.user);
+        setIsAuthenticated(true);
     };
 
     const logout = async () => {
+        const token = localStorage.getItem('session_token');
         try {
-            await fetch(`${window.location.origin}/auth/logout`);
+            await fetch(`${window.location.origin}/auth/logout`, {
+                method: 'POST',
+                headers: { 'X-Session-Token': token }
+            });
         } catch (e) {
             console.error("Logout error", e);
         }
+        localStorage.removeItem('session_token');
         setUser(null);
         setIsAuthenticated(false);
-        localStorage.removeItem('comet_user');
     };
 
     return (
-        <AuthContext.Provider value={{ user, isAuthenticated, login, logout, loading }}>
+        <AuthContext.Provider value={{ user, isAuthenticated, login, register, logout, loading }}>
             {children}
         </AuthContext.Provider>
     );

@@ -215,10 +215,24 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
           <Settings size={20} />
           {!isCollapsed && <span className="nav-label">Settings & Help</span>}
         </button>
-        <button className="nav-item" title="Profile">
-          <User size={20} />
-          {!isCollapsed && <span className="nav-label">Profile</span>}
-        </button>
+
+        <div className="user-profile-section">
+          <div className="nav-item profile-info" title={user?.username || "Profile"}>
+            <div className="avatar">{user?.username?.[0]?.toUpperCase() || <User size={20} />}</div>
+            {!isCollapsed && <span className="nav-label user-name">{user?.username || "Explorer"}</span>}
+            {!isCollapsed && (
+              <button className="logout-btn" onClick={logout} title="Logout">
+                <LogOut size={16} />
+              </button>
+            )}
+          </div>
+          {isCollapsed && (
+            <button className="nav-item collapse-logout" onClick={logout} title="Logout">
+              <LogOut size={20} />
+            </button>
+          )}
+        </div>
+
         <button
           className="nav-item toggle-btn"
           onClick={() => setIsCollapsed(!isCollapsed)}
@@ -546,6 +560,65 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
         .close-search-btn:hover {
           color: var(--color-text-white);
           background: rgba(255, 255, 255, 0.1);
+        }
+
+        .user-profile-section {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .profile-info {
+            gap: 0.8rem;
+            cursor: default;
+        }
+
+        .profile-info:hover {
+            background: transparent;
+        }
+
+        .avatar {
+            width: 32px;
+            height: 32px;
+            background: var(--color-accent-orange);
+            color: #000;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+            box-shadow: 0 0 10px rgba(255, 140, 66, 0.3);
+        }
+
+        .user-name {
+            font-weight: 500;
+            color: var(--color-text-white);
+        }
+
+        .logout-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--color-text-muted);
+            padding: 0.4rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logout-btn:hover {
+            background: rgba(255, 85, 85, 0.1);
+            color: #ff5555;
+            border-color: rgba(255, 85, 85, 0.2);
+        }
+
+        .collapse-logout {
+            justify-content: center;
         }
 
         @keyframes fadeIn {

@@ -140,24 +140,51 @@ async def generate_chat_title(session_id: str, user_message: str):
 # --- Endpoints ---
 
 @app.get("/sessions")
-async def get_sessions(x_user_id: Optional[str] = Header(None, alias="X-User-ID")):
+async def get_sessions(
+    request: Request,
+    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+):
+    token = request.headers.get("X-Session-Token")
+    user_id = None
+    
+    if token:
+        conn_auth = get_db_connection()
+        user_row = conn_auth.execute("SELECT user_id FROM user_sessions WHERE session_token = ?", (token,)).fetchone()
+        conn_auth.close()
+        if user_row:
+            user_id = user_row["user_id"]
+            
+    # Fallback to X-User-ID if not logged in
+    final_id = user_id or x_user_id
+    
     conn = get_db_connection()
-    if x_user_id:
-        sessions = conn.execute("SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at DESC", (x_user_id,)).fetchall()
+    if final_id:
+        sessions = conn.execute("SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at DESC", (final_id,)).fetchall()
     else:
-        # Fallback for old clients or if no ID sent: return nothing or public sessions
-        # For privacy, better to return empty list if no ID provided in this new mode
         sessions = []
     conn.close()
-    return [{"id": s["id"], "title": s["title"], "created_at": s["created_at"]} for s in sessions]
+    return [dict(s) for s in sessions]
 
 @app.post("/sessions")
-async def create_session(title: str = "New Chat", x_user_id: Optional[str] = Header(None, alias="X-User-ID")):
+async def create_session(
+    request: Request,
+    title: str = "New Chat", 
+    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+):
+    token = request.headers.get("X-Session-Token")
+    user_id = None
+    if token:
+        conn_auth = get_db_connection()
+        user_row = conn_auth.execute("SELECT user_id FROM user_sessions WHERE session_token = ?", (token,)).fetchone()
+        conn_auth.close()
+        if user_row:
+            user_id = user_row["user_id"]
+
+    final_id = user_id or x_user_id
     session_id = str(uuid.uuid4())
     conn = get_db_connection()
-    # Save with user_id if present
-    conn.execute("INSERT INTO sessions (id, title, created_at, user_id) VALUES (?, ?, ?, ?)", 
-                 (session_id, title, datetime.now(), x_user_id))
+    conn.execute("INSERT INTO sessions (id, title, created_at, user_id) VALUES (?, ?, ?, ?)",
+                 (session_id, title, datetime.now(), final_id))
     conn.commit()
     conn.close()
     return {"id": session_id, "title": title}
@@ -249,10 +276,26 @@ async def chat_endpoint(
     session_id: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None)
 ):
+    # Determine User from Session Token
+    token = request.headers.get("X-Session-Token")
+    username = "Explorer"
+    auth_user_id = None
+    
+    if token:
+        conn_auth = get_db_connection()
+        user_row = conn_auth.execute("""
+            SELECT u.id, u.username FROM users u 
+            JOIN user_sessions s ON u.id = s.user_id 
+            WHERE s.session_token = ?
+        """, (token,)).fetchone()
+        conn_auth.close()
+        if user_row:
+            auth_user_id = user_row["id"]
+            username = user_row["username"]
+
     # Robust data extraction: try Form first, then fallback to JSON
     if message is None or session_id is None:
         try:
-            # Check if content type is JSON
             if "application/json" in request.headers.get("content-type", "").lower():
                 body = await request.json()
                 message = message or body.get("message")
@@ -261,7 +304,6 @@ async def chat_endpoint(
             print(f"DEBUG: Could not parse JSON body: {e}")
 
     if not message or not session_id:
-        print(f"DEBUG: Missing fields - message: {message}, session_id: {session_id}")
         raise HTTPException(status_code=422, detail="Both 'message' and 'session_id' are required fields.")
 
     if not GEMINI_API_KEY:
@@ -280,7 +322,11 @@ async def chat_endpoint(
 
     # 2. Check if we need to generate a title (if it's the start of a chat)
     message_count = conn.execute("SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,)).fetchone()[0]
-    if message_count <= 2: # User message + potentially 1 previous
+    if message_count <= 2: 
+        # Update session with real user_id if we have it
+        if auth_user_id:
+            conn.execute("UPDATE sessions SET user_id = ? WHERE id = ?", (auth_user_id, session_id))
+            conn.commit()
         asyncio.create_task(generate_chat_title(session_id, message))
 
     # 3. Retrieve History for Context
@@ -288,7 +334,7 @@ async def chat_endpoint(
     
     # Prepare history for Groq (OpenAI format)
     session_history = []
-    for row in history_rows[:-1]: # Exclude the just added message
+    for row in history_rows[:-1]: 
         role = "user" if row["role"] == "user" else "assistant"
         session_history.append({"role": role, "content": row["content"]})
 
@@ -297,7 +343,7 @@ async def chat_endpoint(
         if not groq_api_key:
             raise HTTPException(status_code=500, detail="GROQ_API_KEY not found")
         
-        # 5. RAG Integration: Retrieve Context (Using Gemini Embeddings)
+        # 5. RAG Integration
         context_data = ""
         if rag_system:
             try:
@@ -310,8 +356,11 @@ async def chat_endpoint(
         if context_data:
             final_user_message = f"Context from Knowledge Base:\n{context_data}\n\nUser Question: {message}"
 
-        # 7. Prepare Messages for Groq
-        groq_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        # 7. Customize Persona with Username
+        personalized_system_prompt = SYSTEM_PROMPT + f"\n\nYou are talking to {username}. Address them as {username} occasionally in a natural way."
+
+        # 8. Prepare Messages for Groq
+        groq_messages = [{"role": "system", "content": personalized_system_prompt}]
         groq_messages.extend(session_history)
         groq_messages.append({"role": "user", "content": final_user_message})
 
