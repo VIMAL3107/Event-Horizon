@@ -14,3 +14,4 @@ python-multipart
 google-auth-oauthlib
 google-api-python-client
 google-auth
+email-validator
