@@ -217,22 +217,16 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
         </button>
 
         <div className="user-profile-section">
-          <div className="nav-item profile-info" title={user?.username || "Guest Profile"}>
+          <div className="nav-item profile-info" title={user?.username || "Profile"}>
             <div className="avatar">{user?.username?.[0]?.toUpperCase() || <User size={20} />}</div>
             {!isCollapsed && <span className="nav-label user-name">{user?.username || "Explorer"}</span>}
-            {!isCollapsed && isAuthenticated && (
+            {!isCollapsed && (
               <button className="logout-btn" onClick={logout} title="Logout">
                 <LogOut size={16} />
               </button>
             )}
           </div>
-          {!isAuthenticated && !isCollapsed && (
-            <button className="nav-item login-trigger-btn" onClick={() => onSettings('auth')}>
-              <Plus size={16} />
-              <span className="nav-label">Sign In</span>
-            </button>
-          )}
-          {isAuthenticated && isCollapsed && (
+          {isCollapsed && (
             <button className="nav-item collapse-logout" onClick={logout} title="Logout">
               <LogOut size={20} />
             </button>

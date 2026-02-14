@@ -202,10 +202,9 @@ function App() {
     );
   }
 
-  // Allow direct access to chat even if not authenticated
-  // We will show the AuthPage as a modal or just let them stay anonymous.
-  // For now, if not authenticated and trying to access a protected feature, 
-  // we could show it, but the user wants "direct open chat".
+  if (!isAuthenticated) {
+    return <AuthPage />;
+  }
 
   // Effect to close auth modal on successful login
   useEffect(() => {
