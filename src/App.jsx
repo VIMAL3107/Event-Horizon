@@ -202,9 +202,17 @@ function App() {
     );
   }
 
-  if (!isAuthenticated) {
-    return <AuthPage />;
-  }
+  // Allow direct access to chat even if not authenticated
+  // We will show the AuthPage as a modal or just let them stay anonymous.
+  // For now, if not authenticated and trying to access a protected feature, 
+  // we could show it, but the user wants "direct open chat".
+
+  // Effect to close auth modal on successful login
+  useEffect(() => {
+    if (isAuthenticated && activeModal === 'auth') {
+      setActiveModal(null);
+    }
+  }, [isAuthenticated, activeModal]);
 
   return (
     <div className="app-container">
@@ -221,10 +229,26 @@ function App() {
       />
       <ChatArea messages={messages} onSendMessage={handleSendMessage} />
 
-      {/* Modals can be updated later if needed */}
       {activeModal === 'search' && <div className="modal-placeholder">Search Modal</div>}
       {activeModal === 'history' && <div className="modal-placeholder">History Modal</div>}
       {activeModal === 'settings' && <div className="modal-placeholder">Settings Modal</div>}
+      {activeModal === 'auth' && (
+        <div className="auth-modal-overlay">
+          <button className="close-auth-btn" onClick={() => setActiveModal(null)}><X size={24} /></button>
+          <AuthPage onComplete={() => setActiveModal(null)} />
+          <style>{`
+            .auth-modal-overlay {
+              position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+              z-index: 2000; display: flex; align-items: center; justify-content: center;
+              background: rgba(0,0,0,0.85); backdrop-filter: blur(5px);
+            }
+            .close-auth-btn {
+              position: absolute; top: 2rem; right: 2rem; color: #fff;
+              background: none; border: none; cursor: pointer; z-index: 2001;
+            }
+          `}</style>
+        </div>
+      )}
 
       <style>{`
   .app-container {

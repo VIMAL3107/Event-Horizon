@@ -293,17 +293,23 @@ async def chat_endpoint(
             auth_user_id = user_row["id"]
             username = user_row["username"]
 
-    # Robust data extraction: try Form first, then fallback to JSON
+    # Robust data extraction: try Form first, then fallback to request contents
     if message is None or session_id is None:
         try:
-            if "application/json" in request.headers.get("content-type", "").lower():
+            content_type = request.headers.get("content-type", "").lower()
+            if "application/json" in content_type:
                 body = await request.json()
                 message = message or body.get("message")
                 session_id = session_id or body.get("session_id")
+            elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+                form_data = await request.form()
+                message = message or form_data.get("message")
+                session_id = session_id or form_data.get("session_id")
         except Exception as e:
-            print(f"DEBUG: Could not parse JSON body: {e}")
+            print(f"DEBUG: Data extraction failed: {e}")
 
     if not message or not session_id:
+        print(f"DEBUG: Extraction failed - message: {message}, session_id: {session_id}")
         raise HTTPException(status_code=422, detail="Both 'message' and 'session_id' are required fields.")
 
     if not GEMINI_API_KEY:

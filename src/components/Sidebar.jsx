@@ -217,16 +217,22 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
         </button>
 
         <div className="user-profile-section">
-          <div className="nav-item profile-info" title={user?.username || "Profile"}>
+          <div className="nav-item profile-info" title={user?.username || "Guest Profile"}>
             <div className="avatar">{user?.username?.[0]?.toUpperCase() || <User size={20} />}</div>
             {!isCollapsed && <span className="nav-label user-name">{user?.username || "Explorer"}</span>}
-            {!isCollapsed && (
+            {!isCollapsed && isAuthenticated && (
               <button className="logout-btn" onClick={logout} title="Logout">
                 <LogOut size={16} />
               </button>
             )}
           </div>
-          {isCollapsed && (
+          {!isAuthenticated && !isCollapsed && (
+            <button className="nav-item login-trigger-btn" onClick={() => onSettings('auth')}>
+              <Plus size={16} />
+              <span className="nav-label">Sign In</span>
+            </button>
+          )}
+          {isAuthenticated && isCollapsed && (
             <button className="nav-item collapse-logout" onClick={logout} title="Logout">
               <LogOut size={20} />
             </button>
@@ -619,6 +625,19 @@ const Sidebar = ({ onNewChat, onSearch, onSettings, sessions = [], currentSessio
 
         .collapse-logout {
             justify-content: center;
+        }
+
+        .login-trigger-btn {
+            background: rgba(255, 140, 66, 0.1);
+            border: 1px solid rgba(255, 140, 66, 0.2);
+            color: var(--color-accent-orange);
+            margin-top: 4px;
+        }
+
+        .login-trigger-btn:hover {
+            background: rgba(255, 140, 66, 0.2);
+            border-color: var(--color-accent-orange);
+            color: #fff;
         }
 
         @keyframes fadeIn {

@@ -4,6 +4,8 @@ const AuthContext = createContext();
 
 export const useAuth = () => useContext(AuthContext);
 
+const AUTH_BASE_URL = import.meta.env.DEV ? 'http://localhost:8000' : window.location.origin;
+
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -21,7 +23,7 @@ export const AuthProvider = ({ children }) => {
         }
 
         try {
-            const response = await fetch(`${window.location.origin}/auth/status`, {
+            const response = await fetch(`${AUTH_BASE_URL}/auth/status`, {
                 headers: { 'X-Session-Token': token }
             });
             const data = await response.json();
@@ -43,7 +45,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     const register = async (username, email, password) => {
-        const response = await fetch(`${window.location.origin}/auth/register`, {
+        const response = await fetch(`${AUTH_BASE_URL}/auth/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, email, password })
@@ -55,7 +57,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     const login = async (email, password) => {
-        const response = await fetch(`${window.location.origin}/auth/login`, {
+        const response = await fetch(`${AUTH_BASE_URL}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password })
@@ -75,7 +77,7 @@ export const AuthProvider = ({ children }) => {
     const logout = async () => {
         const token = localStorage.getItem('session_token');
         try {
-            await fetch(`${window.location.origin}/auth/logout`, {
+            await fetch(`${AUTH_BASE_URL}/auth/logout`, {
                 method: 'POST',
                 headers: { 'X-Session-Token': token }
             });
