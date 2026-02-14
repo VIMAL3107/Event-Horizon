@@ -28,4 +28,6 @@ dist-ssr
 *.db
 *.bak
 
-
+__pycache__/
+*.py[cod]
+*$py.class
