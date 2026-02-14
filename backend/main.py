@@ -240,16 +240,12 @@ async def upload_knowledge(file: UploadFile = File(...)):
             os.remove(temp_filename)
         raise HTTPException(status_code=500, detail=str(e))
 
-class ChatBody(BaseModel):
-    message: str
-    session_id: str
-    file: Optional[str] = None # Base64 or URL if passed via JSON
-
 @app.post("/chat")
-async def chat_endpoint(body: ChatBody):
-    message = body.message
-    session_id = body.session_id
-    
+async def chat_endpoint(
+    message: str = Form(...),
+    session_id: str = Form(...),
+    file: Optional[UploadFile] = File(None)
+):
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set on server")
 
@@ -257,7 +253,7 @@ async def chat_endpoint(body: ChatBody):
     
     # 1. Save User Message
     msg_type = "text"
-    if body.file:
+    if file:
         msg_type = "file"
         
     conn.execute("INSERT INTO messages (session_id, role, content, type, created_at) VALUES (?, ?, ?, ?, ?)",
