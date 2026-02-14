@@ -46,7 +46,12 @@ def get_flow(redirect_uri=None):
 
 @router.get("/auth/login")
 async def login(request: Request):
-    flow = get_flow(redirect_uri="http://localhost:8001/auth/callback")
+    # Determine base URL dynamically from request
+    host = request.headers.get('host')
+    proto = request.headers.get('x-forwarded-proto', 'http')
+    redirect_uri = f"{proto}://{host}/auth/callback"
+    
+    flow = get_flow(redirect_uri=redirect_uri)
     if not flow:
         return {"error": "client_secret.json not found on server."}
     
@@ -58,7 +63,11 @@ async def login(request: Request):
 
 @router.get("/auth/callback")
 async def callback(code: str, request: Request):
-    flow = get_flow(redirect_uri="http://localhost:8001/auth/callback")
+    host = request.headers.get('host')
+    proto = request.headers.get('x-forwarded-proto', 'http')
+    redirect_uri = f"{proto}://{host}/auth/callback"
+
+    flow = get_flow(redirect_uri=redirect_uri)
     if not flow:
          raise HTTPException(status_code=500, detail="Configuration missing")
     
@@ -75,8 +84,8 @@ async def callback(code: str, request: Request):
     conn.commit()
     conn.close()
     
-    # Return to frontend
-    return RedirectResponse(url="http://localhost:5173?status=connected")
+    # Return to frontend - relative to same host
+    return RedirectResponse(url=f"{proto}://{host}?status=connected")
 
 @router.get("/auth/status")
 async def auth_status():

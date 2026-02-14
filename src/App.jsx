@@ -123,7 +123,7 @@ function App() {
         const filtered = prev.filter(msg => !msg.isThinking);
         return [...filtered, {
           type: 'ai',
-          content: `Error: ${error.message}. (Ensure backend is running at http://localhost:8000)`
+          content: `Error: ${error.message}. (Ensure the backend is running and reachable)`
         }];
       });
     } finally {

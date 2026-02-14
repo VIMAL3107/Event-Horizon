@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import List, Optional
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Header
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,7 @@ import google.generativeai as genai
 
 # Local Imports
 from rag import RAGSystem
+from auth import router as auth_router
 
 # --- Configuration & Setup ---
 
@@ -28,6 +29,7 @@ load_dotenv(dotenv_path=env_path)
 load_dotenv() # Fallback to CWD
 
 app = FastAPI()
+app.include_router(auth_router)
 
 # Configure CORS
 app.add_middleware(
@@ -242,10 +244,26 @@ async def upload_knowledge(file: UploadFile = File(...)):
 
 @app.post("/chat")
 async def chat_endpoint(
-    message: str = Form(...),
-    session_id: str = Form(...),
+    request: Request,
+    message: Optional[str] = Form(None),
+    session_id: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None)
 ):
+    # Robust data extraction: try Form first, then fallback to JSON
+    if message is None or session_id is None:
+        try:
+            # Check if content type is JSON
+            if "application/json" in request.headers.get("content-type", "").lower():
+                body = await request.json()
+                message = message or body.get("message")
+                session_id = session_id or body.get("session_id")
+        except Exception as e:
+            print(f"DEBUG: Could not parse JSON body: {e}")
+
+    if not message or not session_id:
+        print(f"DEBUG: Missing fields - message: {message}, session_id: {session_id}")
+        raise HTTPException(status_code=422, detail="Both 'message' and 'session_id' are required fields.")
+
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set on server")
 

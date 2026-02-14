@@ -15,7 +15,7 @@ export const AuthProvider = ({ children }) => {
 
     const checkAuth = async () => {
         try {
-            const response = await fetch('http://localhost:8001/auth/status');
+            const response = await fetch(`${window.location.origin}/auth/status`);
             const data = await response.json();
             if (data.connected && data.user) {
                 setUser(data.user);
@@ -34,12 +34,12 @@ export const AuthProvider = ({ children }) => {
     };
 
     const login = () => {
-        window.location.href = 'http://localhost:8001/auth/login';
+        window.location.href = `${window.location.origin}/auth/login`;
     };
 
     const logout = async () => {
         try {
-            await fetch('http://localhost:8001/auth/logout');
+            await fetch(`${window.location.origin}/auth/logout`);
         } catch (e) {
             console.error("Logout error", e);
         }
