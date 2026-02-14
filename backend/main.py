@@ -268,88 +268,75 @@ async def chat_endpoint(
     # 3. Retrieve History for Context
     history_rows = conn.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,)).fetchall()
     
-    gemini_history = []
-    # Load history into Gemini format
-    for row in history_rows[:-1]: # Exclude the just added message to avoid duplication in history vs new message
-        role = "user" if row["role"] == "user" else "model"
-        gemini_history.append({"role": role, "parts": [row["content"]]})
+    # Prepare history for Groq (OpenAI format)
+    session_history = []
+    for row in history_rows[:-1]: # Exclude the just added message
+        role = "user" if row["role"] == "user" else "assistant"
+        session_history.append({"role": role, "content": row["content"]})
 
     try:
         groq_api_key = os.getenv("GROQ_API_KEY")
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {groq_api_key}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "messages": [{"role": "user", "content": message}],
-            "model": "llama-3.1-8b-instant"
-        }
-        # Only try Groq if key is present
-        if groq_api_key:
-            try:
-                response = requests.post(url, headers=headers, json=data)
-                if response.status_code == 200:
-                    print("Success! Groq API Key is working.")
-                    # print("Response:", response.json()['choices'][0]['message']['content'])
-                else:
-                    print(f"Groq failed. Status Code: {response.status_code}")
-            except Exception as e:
-                print(f"Groq request error: {e}")
+        if not groq_api_key:
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY not found")
         
-        # 5. RAG Integration: Retrieve Context
-        # We start with the user's raw message
-        final_prompt = message
-        
+        # 5. RAG Integration: Retrieve Context (Using Gemini Embeddings)
+        context_data = ""
         if rag_system:
             try:
                 context_data = rag_system.get_context(message)
-                if context_data:
-                    system_instruction_rag = f"""
-                    You are an assistant. Use the provided Context to answer the user's question. 
-                    If the answer is not in the context, just use your own knowledge.
-                    
-                    Context:
-                    {context_data}
-                    """
-                    final_prompt = f"{system_instruction_rag}\n\nUser Question: {message}"
             except Exception as e:
-                error_str = str(e)
-                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                     print(f"RAG Warning: Gemini Embedding Quota Exceeded (Free Tier Limit). Proceeding without context.")
-                else:
-                    print(f"RAG Retrieval failed: {e}. Proceeding without context.")
-                # We simply continue with the original 'message' as final_prompt
-                pass
-
-        # 6. Prepare Content Parts (handling file uploads if any)
-        content_parts = [final_prompt]
+                print(f"RAG Retrieval failed: {e}")
         
-        if file:
-            content_type = file.content_type
-            file_data = await file.read()
-            blob = {"mime_type": content_type, "data": file_data}
-            content_parts.append(blob)
+        # 6. Construct Final Prompt with Context
+        final_user_message = message
+        if context_data:
+            final_user_message = f"Context from Knowledge Base:\n{context_data}\n\nUser Question: {message}"
 
-        # 7. Generate Response (Streaming)
-        # Initialize Gemini Model & Chat Session
-        model_name = "gemini-1.5-flash"
-        gen_model = genai.GenerativeModel(model_name=model_name, system_instruction=SYSTEM_PROMPT)
-        chat = gen_model.start_chat(history=gemini_history)
+        # 7. Prepare Messages for Groq
+        groq_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        groq_messages.extend(session_history)
+        groq_messages.append({"role": "user", "content": final_user_message})
 
+        # 8. Generate Response (Streaming via Groq)
         async def generate():
-            print("DEBUG: Starting generation...")
+            print("DEBUG: Starting Groq generation...")
             full_response = ""
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {groq_api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "messages": groq_messages,
+                "model": "llama-3.3-70b-versatile",
+                "stream": True
+            }
+
             try:
-                print(f"DEBUG: sending message to gemini with parts: {len(content_parts)}")
-                response = await chat.send_message_async(content_parts, stream=True)
-                print("DEBUG: message sent, receiving chunks...")
-                async for chunk in response:
-                    if chunk.text:
-                        full_response += chunk.text
-                        yield chunk.text
+                # Use requests to stream from Groq
+                response = requests.post(url, headers=headers, json=payload, stream=True)
+                if response.status_code != 200:
+                    yield f"[Error from Groq API: {response.status_code}]"
+                    return
+
+                for line in response.iter_lines():
+                    if line:
+                        line_str = line.decode('utf-8')
+                        if line_str.startswith('data: '):
+                            data_content = line_str[6:]
+                            if data_content == '[DONE]':
+                                break
+                            try:
+                                chunk_json = json.loads(data_content)
+                                content = chunk_json['choices'][0]['delta'].get('content', '')
+                                if content:
+                                    full_response += content
+                                    yield content
+                            except:
+                                continue
+
             except Exception as e:
-                print(f"DEBUG: Generation ERROR: {e}")
+                print(f"DEBUG: Groq Generation ERROR: {e}")
                 yield f"[Error generating response: {str(e)}]"
                 return
 
@@ -365,15 +352,15 @@ async def chat_endpoint(
             except Exception as e:
                 print(f"DEBUG: DB Error in background: {e}")
 
-            
         return StreamingResponse(generate(), media_type="text/plain")
-
     except Exception as e:
-        conn.close()
-        print(f"Gemini Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Gemini API Error: {str(e)}")
+        if 'conn' in locals():
+            conn.close()
+        print(f"Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        conn.close()
+        if 'conn' in locals():
+            conn.close()
 
 @app.post("/generate-image")
 async def generate_image(prompt: str = Form(...)):
