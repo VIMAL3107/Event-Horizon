@@ -1,4 +1,4 @@
-Error: Internal Server Error. (Ensure backend is running at http://localhost:8000)fastapi
+fastapi
 uvicorn
 httpx
 python-dotenv

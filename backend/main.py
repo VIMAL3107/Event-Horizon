@@ -9,9 +9,10 @@ from datetime import datetime
 from typing import List, Optional
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -41,9 +42,10 @@ app.add_middleware(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
+else:
+    print("WARNING: GEMINI_API_KEY not set found in environment variables.")
 
 # Initialize RAG System
-# We initialize it here so it's ready for the app
 rag_system = None
 if GEMINI_API_KEY:
     try:
@@ -60,8 +62,6 @@ def get_db_connection():
     conn = sqlite3.connect(DB_NAME, timeout=30.0)
     conn.row_factory = sqlite3.Row
     return conn
-
-from fastapi import Header
 
 def init_db():
     conn = get_db_connection()
@@ -105,7 +105,7 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[Message]
-    model: str = "gemini-flash-lite-latest"
+    model: str = "gemini-1.5-flash"
 
 SYSTEM_PROMPT = """
 You are a helpful, knowledgeable, and versatile AI assistant.
@@ -124,7 +124,7 @@ Adapt your response style to the user's request.
 async def generate_chat_title(session_id: str, user_message: str):
     """Generates a short title for the chat session based on the first message."""
     try:
-        model = genai.GenerativeModel("gemini-flash-lite-latest")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(f"Generate a short (3-5 words) title for this chat based on the user's message: {user_message}")
         new_title = response.text.strip()
         
@@ -275,13 +275,24 @@ async def chat_endpoint(
         gemini_history.append({"role": role, "parts": [row["content"]]})
 
     try:
-        # 4. Initialize Model
-        model = genai.GenerativeModel(
-            model_name="gemini-flash-lite-latest",
-            system_instruction=SYSTEM_PROMPT
-        )
-        
-        chat = model.start_chat(history=gemini_history)
+        model = os.getenv("GROQ_API_KEY")
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {model}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "messages": [{"role": "user", "content": message}],
+            "model": "llama-3.1-8b-instant"
+        }
+        response = requests.post(url, headers=headers, json=data)
+        if response.status_code == 200:
+            print("Success! Groq API Key is working.")
+            print("Response:", response.json()['choices'][0]['message']['content'])
+            final_prompt = response.json()['choices'][0]['message']['content']
+        else:
+            print(f"Failed. Status Code: {response.status_code}")
+            print("Error:", response.text)
         
         # 5. RAG Integration: Retrieve Context
         # We start with the user's raw message
@@ -300,7 +311,11 @@ async def chat_endpoint(
                     """
                     final_prompt = f"{system_instruction_rag}\n\nUser Question: {message}"
             except Exception as e:
-                print(f"RAG Retrieval failed (Quota or other error): {e}. Proceeding without context.")
+                error_str = str(e)
+                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                     print(f"RAG Warning: Gemini Embedding Quota Exceeded (Free Tier Limit). Proceeding without context.")
+                else:
+                    print(f"RAG Retrieval failed: {e}. Proceeding without context.")
                 # We simply continue with the original 'message' as final_prompt
                 pass
 
@@ -323,7 +338,6 @@ async def chat_endpoint(
                 print("DEBUG: message sent, receiving chunks...")
                 async for chunk in response:
                     if chunk.text:
-                        # print(f"DEBUG: chunk received: {chunk.text[:20]}...")
                         full_response += chunk.text
                         yield chunk.text
             except Exception as e:
@@ -385,31 +399,20 @@ async def generate_image(prompt: str = Form(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- Frontend Static Files Serving ---
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
 # Mount static files - serve the built React app
-# We expect the 'dist' folder to be in the parent directory of backend
 frontend_dist = Path(__file__).parent.parent / 'dist'
 
 if frontend_dist.exists():
-    # Mount assets (JS, CSS, images)
     app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
 
-    # Catch-all route for SPA client-side routing
-    # This must be defined AFTER all other API routes
     @app.get("/{catchall:path}")
     async def serve_react_app(catchall: str):
-        # Allow API routes to pass through if they weren't caught above
         if catchall.startswith("api/"):
             raise HTTPException(status_code=404, detail="API route not found")
-            
-        # Check if a specific file is requested
         file_path = frontend_dist / catchall
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
-            
-        # Otherwise return index.html
         return FileResponse(frontend_dist / "index.html")
 else:
     print(f"WARNING: Frontend dist directory not found at {frontend_dist}")
