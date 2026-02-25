@@ -329,11 +329,43 @@ async def chat_endpoint(
 
     conn = get_db_connection()
     
-    # 1. Save User Message
+    # 1. Save User Message & Process File
     msg_type = "text"
+    file_content_extracted = ""
     if file:
         msg_type = "file"
-        
+        if rag_system:
+            try:
+                # Save temp file
+                temp_filename = f"chat_temp_{uuid.uuid4()}_{file.filename}"
+                with open(temp_filename, "wb") as buffer:
+                    content = await file.read()
+                    buffer.write(content)
+                
+                # Add to RAG
+                rag_system.add_file(temp_filename)
+                
+                # Optionally also extract text to use directly in this prompt
+                # if the user just sent the file without specific questions
+                if message.startswith("[Sent a file:"):
+                    from pypdf import PdfReader
+                    ext = os.path.splitext(file.filename)[1].lower()
+                    if ext == ".pdf":
+                        reader = PdfReader(temp_filename)
+                        for page in reader.pages[:5]: # First 5 pages for context
+                            file_content_extracted += page.extract_text() + "\n"
+                    elif ext in [".txt", ".md", ".json"]:
+                        with open(temp_filename, "r", encoding="utf-8") as f:
+                            file_content_extracted = f.read()
+
+                # Cleanup
+                os.remove(temp_filename)
+                print(f"DEBUG: File {file.filename} processed and added to RAG.")
+            except Exception as e:
+                print(f"DEBUG: File processing error: {e}")
+                if 'temp_filename' in locals() and os.path.exists(temp_filename):
+                    os.remove(temp_filename)
+
     conn.execute("INSERT INTO messages (session_id, role, content, type, created_at) VALUES (?, ?, ?, ?, ?)",
                  (session_id, "user", message, msg_type, datetime.now()))
     conn.commit()
@@ -365,14 +397,18 @@ async def chat_endpoint(
         context_data = ""
         if rag_system:
             try:
-                context_data = rag_system.get_context(message)
+                # Use extracted content if it's a fresh file upload, otherwise use RAG search
+                if file_content_extracted:
+                    context_data = file_content_extracted[:10000] # Limit context size
+                else:
+                    context_data = rag_system.get_context(message)
             except Exception as e:
                 print(f"RAG Retrieval failed: {e}")
         
         # 6. Construct Final Prompt with Context
         final_user_message = message
         if context_data:
-            final_user_message = f"Context from Knowledge Base:\n{context_data}\n\nUser Question: {message}"
+            final_user_message = f"Relevant Context:\n{context_data}\n\nUser Message: {message}"
 
         # 7. Customize Persona with Username
         personalized_system_prompt = SYSTEM_PROMPT + f"\n\nYou are talking to {username}. Address them as {username} occasionally in a natural way."
