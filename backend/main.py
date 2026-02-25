@@ -293,7 +293,7 @@ async def chat_endpoint(
             auth_user_id = user_row["id"]
             username = user_row["username"]
 
-    # Robust data extraction: try Form first, then fallback to request contents
+    # Robust data extraction
     if message is None or session_id is None:
         try:
             content_type = request.headers.get("content-type", "").lower()
@@ -301,16 +301,28 @@ async def chat_endpoint(
                 body = await request.json()
                 message = message or body.get("message")
                 session_id = session_id or body.get("session_id")
-            elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+            elif "multipart" in content_type or "form-urlencoded" in content_type:
                 form_data = await request.form()
                 message = message or form_data.get("message")
                 session_id = session_id or form_data.get("session_id")
         except Exception as e:
             print(f"DEBUG: Data extraction failed: {e}")
 
-    if not message or not session_id:
-        print(f"DEBUG: Extraction failed - message: {message}, session_id: {session_id}")
-        raise HTTPException(status_code=422, detail="Both 'message' and 'session_id' are required fields.")
+    # Convert potentially 'null' or 'undefined' strings from frontend
+    if session_id == "null" or session_id == "undefined":
+        session_id = None
+
+    # Allow empty message if a file is present
+    if (not message or message.strip() == "") and file:
+        message = f"[Sent a file: {file.filename}]"
+
+    if not session_id:
+        print(f"DEBUG: Session ID missing")
+        raise HTTPException(status_code=422, detail="Missing requirement: 'session_id' is required.")
+
+    if not message or message.strip() == "":
+        print(f"DEBUG: Message missing - session_id: {session_id}")
+        raise HTTPException(status_code=422, detail="Missing requirement: 'message' is required.")
 
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set on server")

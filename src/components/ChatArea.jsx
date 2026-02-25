@@ -6,12 +6,16 @@ const ChatArea = ({ messages, onSendMessage }) => {
   const messagesEndRef = useRef(null);
   const [videoError, setVideoError] = useState(false);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = (behavior = "auto") => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior });
+    }
   };
 
   useEffect(() => {
-    scrollToBottom();
+    // Use 'auto' for immediate jump on new messages during streaming
+    // Use 'smooth' only for the very first load or when streaming finishes
+    scrollToBottom("auto");
   }, [messages]);
 
   return (
@@ -35,12 +39,12 @@ const ChatArea = ({ messages, onSendMessage }) => {
         <div className="vignette"></div>
       </div>
 
-      <div className="messages-wrapper">
+      <div className="messages-wrapper" id="messages-scroll-area">
         <div className="messages-list">
           {messages.map((msg, index) => (
             <MessageBubble key={index} type={msg.type} content={msg.content} />
           ))}
-          <div ref={messagesEndRef} />
+          <div ref={messagesEndRef} style={{ height: '1px' }} />
         </div>
       </div>
 
@@ -127,19 +131,19 @@ const ChatArea = ({ messages, onSendMessage }) => {
           position: relative;
           z-index: 10;
           overflow-y: auto;
-          padding: 2rem 2rem 8rem 2rem; /* Bottom padding for input area */
+          overflow-x: hidden;
+          padding: 2rem 2rem 10rem 2rem; /* Bottom padding for input area */
           display: flex;
           flex-direction: column;
+          scroll-behavior: auto;
         }
 
         .messages-list {
           max-width: 1000px;
           width: 100%;
           margin: 0 auto;
-          flex: 1;
           display: flex;
           flex-direction: column;
-          justify-content: flex-end; /* Start messages from bottom if few */
           min-height: min-content;
         }
       `}</style>

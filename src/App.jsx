@@ -87,7 +87,6 @@ function App() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let aiContent = '';
-      let isFirstChunk = true;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -99,25 +98,25 @@ function App() {
         // Update the AI message in the UI
         setMessages(prev => {
           const newMsgs = [...prev];
-
-          // Find the last message (which should be our AI placeholder)
-          // We look from the end. It might not be the last one if the user typed fast, 
-          // but valid for this single-user flow.
           const lastMsgIndex = newMsgs.length - 1;
 
-          if (lastMsgIndex >= 0) {
-            const lastMsg = newMsgs[lastMsgIndex];
-            // Ensure we are updating the AI message
-            if (lastMsg.type === 'ai') {
-              newMsgs[lastMsgIndex] = {
-                ...lastMsg,
-                content: aiContent,
-                isThinking: false // Remove thinking flag once we have data
-              };
-            }
+          if (lastMsgIndex >= 0 && newMsgs[lastMsgIndex].type === 'ai') {
+            newMsgs[lastMsgIndex] = {
+              ...newMsgs[lastMsgIndex],
+              content: aiContent,
+              isThinking: false
+            };
           }
           return newMsgs;
         });
+      }
+
+      // 5. Refresh sessions to get the newly generated title if it's a new chat
+      // We wait a bit to give the backend background task time to finish Gemini call
+      if (messages.length <= 2) {
+        setTimeout(() => {
+          loadSessions();
+        }, 2000);
       }
 
     } catch (error) {
