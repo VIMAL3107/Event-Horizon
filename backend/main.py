@@ -110,15 +110,15 @@ class ChatRequest(BaseModel):
     model: str = "gemini-1.5-flash"
 
 SYSTEM_PROMPT = """
-You are a helpful, knowledgeable, and versatile AI assistant.
+You are a helpful, knowledgeable, and versatile AI assistant. 
 
-**Your Goals:**
-1.  **Be Helpful**: Answer the user's questions clearly, accurately, and concisely.
-2.  **Be Versatile**: You can assist with coding, writing, analysis, creative tasks, and general knowledge.
-3.  **Be Natural**: Communicate in a natural, conversational tone.
-4.  **Be Safe**: Do not generate harmful, illegal, or biased content.
+**IMPORTANT**: You have the capability to analyze files and documents. When a user uploads a file, the system extracts its content and provides it to you in the "Relevant Context" or "Content from uploaded file" section of your prompt. 
 
-Adapt your response style to the user's request.
+**Your Instructions:**
+1.  **Use Provided Context**: If context from a file is present, treat it as information you have "read". 
+2.  **Do Not Deny Access**: Never tell the user you "cannot open files" or "don't have the capability to view documents" if the file content is provided in your prompt. 
+3.  **Be Helpful**: Answer clearly and accurately based on both your knowledge and the provided context.
+4.  **Acknowledge Files**: If a user refers to a specific file (like a resume), look for its content in the context and answer accordingly.
 """
 
 # --- Helper Functions ---
@@ -342,25 +342,35 @@ async def chat_endpoint(
                     content = await file.read()
                     buffer.write(content)
                 
-                # Add to RAG
+                # Add to RAG for long-term storage
                 rag_system.add_file(temp_filename)
                 
-                # Optionally also extract text to use directly in this prompt
-                # if the user just sent the file without specific questions
-                if message.startswith("[Sent a file:"):
-                    from pypdf import PdfReader
-                    ext = os.path.splitext(file.filename)[1].lower()
-                    if ext == ".pdf":
+                # ALWAYS extract text for immediate context if it's a new upload
+                # regardless of what the accompanying message is
+                from pypdf import PdfReader
+                ext = os.path.splitext(file.filename)[1].lower()
+                if ext == ".pdf":
+                    try:
                         reader = PdfReader(temp_filename)
-                        for page in reader.pages[:5]: # First 5 pages for context
-                            file_content_extracted += page.extract_text() + "\n"
-                    elif ext in [".txt", ".md", ".json"]:
-                        with open(temp_filename, "r", encoding="utf-8") as f:
-                            file_content_extracted = f.read()
+                        # Extract up to 10 pages for immediate context
+                        max_pages = min(len(reader.pages), 10)
+                        for i in range(max_pages):
+                            page_text = reader.pages[i].extract_text()
+                            if page_text:
+                                file_content_extracted += page_text + "\n"
+                    except Exception as pdf_err:
+                        print(f"DEBUG: PDF Extraction error: {pdf_err}")
+                elif ext in [".txt", ".md", ".json"]:
+                    with open(temp_filename, "r", encoding="utf-8") as f:
+                        file_content_extracted = f.read()
 
                 # Cleanup
                 os.remove(temp_filename)
-                print(f"DEBUG: File {file.filename} processed and added to RAG.")
+                if file_content_extracted:
+                    print(f"DEBUG: Extracted {len(file_content_extracted)} chars from {file.filename}")
+                else:
+                    print(f"DEBUG: No text could be extracted from {file.filename}")
+
             except Exception as e:
                 print(f"DEBUG: File processing error: {e}")
                 if 'temp_filename' in locals() and os.path.exists(temp_filename):
@@ -397,18 +407,30 @@ async def chat_endpoint(
         context_data = ""
         if rag_system:
             try:
-                # Use extracted content if it's a fresh file upload, otherwise use RAG search
+                # Use extracted content if it's a fresh file upload
                 if file_content_extracted:
-                    context_data = file_content_extracted[:10000] # Limit context size
+                    context_data = file_content_extracted[:15000] # Increased context size to 15k
                 else:
-                    context_data = rag_system.get_context(message)
+                    # SMART RAG: Combine current message with previous user message for better search context
+                    search_query = message
+                    if session_history:
+                        # Find last user message
+                        last_user_m = next((m['content'] for m in reversed(session_history) if m['role'] == 'user'), None)
+                        if last_user_m:
+                            # Truncate if too long
+                            search_query = f"{last_user_m[:200]} {message}"
+                    
+                    context_data = rag_system.get_context(search_query)
             except Exception as e:
                 print(f"RAG Retrieval failed: {e}")
         
         # 6. Construct Final Prompt with Context
         final_user_message = message
         if context_data:
-            final_user_message = f"Relevant Context:\n{context_data}\n\nUser Message: {message}"
+            print(f"DEBUG: Injecting {len(context_data)} bytes of context into prompt.")
+            final_user_message = f"--- START OF RELEVANT CONTEXT ---\n{context_data}\n--- END OF RELEVANT CONTEXT ---\n\nUser Message: {message}"
+        else:
+            print("DEBUG: No context discovered for this turn.")
 
         # 7. Customize Persona with Username
         personalized_system_prompt = SYSTEM_PROMPT + f"\n\nYou are talking to {username}. Address them as {username} occasionally in a natural way."
