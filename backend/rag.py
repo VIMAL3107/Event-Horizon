@@ -1,6 +1,6 @@
 import os
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
@@ -14,27 +14,53 @@ class RAGSystem:
             model="models/text-embedding-004", 
             google_api_key=api_key
         )
-        self.vector_store = Chroma(
-            persist_directory="./chroma_db", 
-            embedding_function=self.embeddings
-        )
+        # Using FAISS for Python 3.14 compatibility (ChromaDB has Pydantic issues)
+        self.index_path = "faiss_index"
+        self.vector_store = None
+        self._load_index()
         self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+
+    def _load_index(self):
+        """Loads the FAISS index from disk or creates a dummy initial one."""
+        try:
+            if os.path.exists(self.index_path):
+                # allow_dangerous_deserialization is required for loading FAISS files
+                self.vector_store = FAISS.load_local(
+                    self.index_path, 
+                    self.embeddings, 
+                    allow_dangerous_deserialization=True
+                )
+                print("DEBUG: FAISS index loaded from disk.")
+            else:
+                # Initialize an empty vector store if none exists
+                # We need at least one initial document to save an index
+                print("DEBUG: No FAISS index found. Creating new...")
+                pass # Will be created on first add_text
+        except Exception as e:
+            print(f"DEBUG: FAISS Load error: {e}")
 
     def add_text(self, text: str):
         if not text or len(text.strip()) < 5:
             return
+        
         docs = [Document(page_content=text)]
         chunks = self.text_splitter.split_documents(docs)
-        self.vector_store.add_documents(chunks)
-        print(f"DEBUG: Added {len(chunks)} chunks to RAG.")
+        
+        if self.vector_store is None:
+            self.vector_store = FAISS.from_documents(chunks, self.embeddings)
+        else:
+            self.vector_store.add_documents(chunks)
+            
+        # Persistence
+        self.vector_store.save_local(self.index_path)
+        print(f"DEBUG: Saved {len(chunks)} chunks to FAISS.")
 
     def get_context(self, query: str):
-        if not query or len(query.strip()) < 3:
+        if not query or len(query.strip()) < 3 or self.vector_store is None:
             return ""
             
         print(f"DEBUG: RAG searching for: {query}")
         
-        # 1. Similarity Search
         try:
             results = self.vector_store.similarity_search(query, k=5)
             context = "\n\n".join([doc.page_content for doc in results])
@@ -45,7 +71,6 @@ class RAGSystem:
         except Exception as e:
             print(f"DEBUG: RAG Search error: {e}")
             
-        # 2. Fallback: If no match, try keywords? (Optional if vector fails)
         return ""
 
     def add_file(self, file_path: str):
